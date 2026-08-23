@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>捐血預約與報到管理系統</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        .page-section { display: none; }
+        .page-section.active { display: block; }
+        .time-btn { width: calc(50% - 6px); margin-bottom: 8px; }
+        @media (min-width: 576px) { .time-btn { width: calc(25% - 6px); } }
+        .time-btn.disabled { pointer-events: none; opacity: 0.55; }
+        #reader { width: 100%; max-width: 480px; margin: 0 auto; border-radius: 8px; overflow: hidden; }
+        .loading-overlay { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; justify-content:center; align-items:center; color:#fff; }
+        .card { border: none; border-radius: 12px; }
+    </style>
+</head>
+<body>
+
+<!-- 載入中遮罩 -->
+<div id="loading" class="loading-overlay">
+    <div class="text-center">
+        <div class="spinner-border text-light mb-2" role="status"></div>
+        <div class="fw-bold" id="loadingText">雲端資料同步中...</div>
+    </div>
+</div>
+
+<div class="container py-4">
+    <!-- 頂部頁籤切換 -->
+    <ul class="nav nav-pills nav-fill bg-white p-2 rounded-3 shadow-sm mb-4">
+        <li class="nav-item">
+            <button class="nav-link active fw-bold" id="tab-booking" onclick="switchPage('booking')">🩸 捐血預約 (前台)</button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link fw-bold" id="tab-admin" onclick="switchPage('admin')">📷 報到與管理 (後台)</button>
+        </li>
+    </ul>
+
+    <!-- ================= 前台：預約系統 ================= -->
+    <div id="booking-section" class="page-section active">
+        <div class="card shadow-sm p-3 p-md-4">
+            <div class="border-bottom pb-3 mb-4">
+                <h3 class="fw-bold text-danger mb-1">線上捐血預約</h3>
+                <p class="text-muted mb-0">請填寫預約資料，系統將自動同步儲存至雲端試算表。</p>
+            </div>
+            
+            <form id="bookingForm" onsubmit="handleBooking(event)">
+                <h5 class="fw-bold mb-3 text-secondary">1. 填寫基本資料</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">姓名 <span class="text-danger">*</span></label>
+                        <input type="text" id="name" class="form-control" required placeholder="請輸入姓名">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">身分證字號 <span class="text-danger">*</span></label>
+                        <input type="text" id="idCard" class="form-control" required placeholder="請輸入身分證字號">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">電話 <span class="text-danger">*</span></label>
+                        <input type="tel" id="phone" class="form-control" required placeholder="請輸入手機號碼">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">捐血量設定 <span class="text-danger">*</span></label>
+                        <select id="volume" class="form-select" required>
+                            <option value="250ml">250 ml</option>
+                            <option value="500ml">500 ml</option>
+                        </select>
+                    </div>
+                </div>
+
+                <h5 class="fw-bold mb-3 text-secondary">2. 選擇日期與時段 (每小時限額 3 人)</h5>
+                <div class="row g-3 mb-4">
+                    <div class="col-md-6">
+                        <label class="form-label">預約日期 <span class="text-danger">*</span></label>
+                        <input type="date" id="bookingDate" class="form-control" required onchange="fetchAndRenderSlots()">
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">選擇時段 <span class="text-danger">*</span></label>
+                        <div id="timeSlotsContainer" class="d-flex flex-wrap gap-2">
+                            <p class="text-muted mb-0">請先選擇預約日期以計算可用名額</p>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" id="submitBtn" class="btn btn-danger btn-lg w-100 fw-bold">確認預約並產生 QR Code</button>
+            </form>
+
+            <div id="qrResult" class="text-center mt-4 pt-4 border-top" style="display: none;">
+                <span class="badge bg-success-subtle text-success fs-6 px-3 py-2 mb-2">✓ 預約成功</span>
+                <h4 class="fw-bold">您的報到 QR Code</h4>
+                <p class="text-muted">請將此頁面截圖保存，現場報到與結束捐血時請出示此條碼。</p>
+                <div id="qrcode" class="d-flex justify-content-center my-3"></div>
+                <button class="btn btn-outline-secondary mt-2" onclick="resetForm()">填寫下一筆預約</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= 後台：管理與掃描報到 ================= -->
+    <div id="admin-section" class="page-section">
+        <div class="card shadow-sm p-3 p-md-4">
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4">
+                <div>
+                    <h3 class="fw-bold mb-1">雲端報到與管理後台</h3>
+                    <p class="text-muted mb-0">資料與 Google 試算表即時同步連動</p>
+                </div>
+                <div>
+                    <button class="btn btn-outline-primary fw-bold me-2" onclick="loadAdminData()">🔄 重新整理</button>
+                    <button class="btn btn-success fw-bold" onclick="exportToExcel()">📊 匯出 Excel</button>
+                </div>
+            </div>
+
+            <div class="text-center mb-4 bg-light p-3 rounded-3">
+                <h5 class="fw-bold mb-3">相機掃描報到</h5>
+                <button id="startScanBtn" class="btn btn-primary" onclick="startScanner()">開啟相機掃描 QR Code</button>
+                <button id="stopScanBtn" class="btn btn-outline-danger d-none" onclick="stopScanner()">關閉相機</button>
+                <div id="reader" class="mt-3"></div>
+            </div>
+
+            <h5 class="fw-bold mb-3">雲端捐血紀錄名冊</h5>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle border">
+                    <thead class="table-light">
+                        <tr>
+                            <th>姓名</th>
+                            <th>身分證</th>
+                            <th>電話</th>
+                            <th>血量</th>
+                            <th>預約時間</th>
+                            <th>報到時間</th>
+                            <th>結束時間</th>
+                            <th>狀態</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recordsTableBody">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<script>
+// ⚠️【請替換此處網址】貼上你的 Google Apps Script Web App 網址 (結尾必須是 /exec)
+const GAS_URL = "https://script.google.com/macros/s/你的_APPS_SCRIPT_網址_貼在這裡/exec";
+
+const TIME_SLOTS = [
+    "08:00-09:00", "09:00-10:00", "10:00-11:00", "11:00-12:00",
+    "13:00-14:00", "14:00-15:00", "15:00-16:00", "16:00-17:00"
+];
+const MAX_PER_SLOT = 3;
+
+let selectedTimeSlot = "";
+let html5QrCode = null;
+let cachedBookings = [];
+
+document.addEventListener("DOMContentLoaded", () => {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById("bookingDate").min = today;
+});
+
+function showLoading(text = "雲端資料處理中...") {
+    document.getElementById("loadingText").innerText = text;
+    document.getElementById("loading").style.display = "flex";
+}
+function hideLoading() {
+    document.getElementById("loading").style.display = "none";
+}
+
+function switchPage(page) {
+    document.querySelectorAll('.nav-link').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.page-section').forEach(sec => sec.classList.remove('active'));
+    
+    if(page === 'booking') {
+        document.getElementById('tab-booking').classList.add('active');
+        document.getElementById('booking-section').classList.add('active');
+        stopScanner();
+    } else {
+        document.getElementById('tab-admin').classList.add('active');
+        document.getElementById('admin-section').classList.add('active');
+        loadAdminData();
+    }
+}
+
+// 讀取 Google 試算表資料
+async function fetchSheetData() {
+    try {
+        const response = await fetch(GAS_URL);
+        const data = await response.json();
+        cachedBookings = data;
+        return data;
+    } catch (error) {
+        alert("無法讀取雲端資料，請檢查 GAS_URL 網址或 Google 權限是否設為「所有人」！");
+        return [];
+    }
+}
+
+// 渲染與計算可用時段名額
+async function fetchAndRenderSlots() {
+    const date = document.getElementById("bookingDate").value;
+    if (!date) return;
+
+    showLoading("正在查詢試算表可用名額...");
+    const bookings = await fetchSheetData();
+    hideLoading();
+
+    const container = document.getElementById("timeSlotsContainer");
+    container.innerHTML = "";
+    selectedTimeSlot = "";
+
+    TIME_SLOTS.forEach(slot => {
+        const count = bookings.filter(b => b.date === date && b.slot === slot).length;
+        const isFull = count >= MAX_PER_SLOT;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `btn ${isFull ? 'btn-secondary disabled' : 'btn-outline-danger'} time-btn`;
+        btn.innerHTML = `${slot}<br><small>(${count}/${MAX_PER_SLOT}人)</small>`;
+        
+        if (isFull) {
+            btn.innerHTML += `<br><small class="fw-bold">已額滿</small>`;
+            btn.disabled = true;
+        } else {
+            btn.onclick = () => {
+                document.querySelectorAll('.time-btn').forEach(b => {
+                    if(!b.classList.contains('btn-secondary')) b.className = 'btn btn-outline-danger time-btn';
+                });
+                btn.className = 'btn btn-danger time-btn';
+                selectedTimeSlot = slot;
+            };
+        }
+        container.appendChild(btn);
+    });
+}
+
+// 提交預約 (修正 JSON 解析問題)
+async function handleBooking(e) {
+    e.preventDefault();
+    if (!selectedTimeSlot) {
+        alert("請先點選選擇預約時段！");
+        return;
+    }
+
+    const bookingId = "DONOR-" + Date.now();
+    const newBooking = {
+        id: bookingId,
+        name: document.getElementById("name").value,
+        idCard: document.getElementById("idCard").value,
+        phone: document.getElementById("phone").value,
+        volume: document.getElementById("volume").value,
+        date: document.getElementById("bookingDate").value,
+        slot: selectedTimeSlot
+    };
+
+    showLoading("正在將預約寫入 Google 試算表...");
+
+    try {
+        await fetch(GAS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "create", data: newBooking }),
+            mode: "no-cors" // 使用相容模式防止跨網域報錯
+        });
+
+        // 產生 QR Code
+        document.getElementById("qrcode").innerHTML = "";
+        new QRCode(document.getElementById("qrcode"), {
+            text: bookingId,
+            width: 180,
+            height: 180
+        });
+
+        document.getElementById("qrResult").style.display = "block";
+        document.getElementById("submitBtn").disabled = true;
+        document.getElementById("qrResult").scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+        alert("預約寫入失敗，請確認網路連線與設定！");
+    } finally {
+        hideLoading();
+    }
+}
+
+function resetForm() {
+    document.getElementById("bookingForm").reset();
+    document.getElementById("submitBtn").disabled = false;
+    document.getElementById("qrResult").style.display = "none";
+    document.getElementById("timeSlotsContainer").innerHTML = '<p class="text-muted mb-0">請先選擇預約日期以計算可用名額</p>';
+}
+
+function startScanner() {
+    document.getElementById("startScanBtn").classList.add("d-none");
+    document.getElementById("stopScanBtn").classList.remove("d-none");
+
+    html5QrCode = new Html5Qrcode("reader");
+    html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        (decodedText) => {
+            processScan(decodedText);
+            stopScanner();
+        },
+        () => {}
+    ).catch(err => {
+        alert("無法開啟相機 (請確認授權或網址是否為 https): " + err);
+        stopScanner();
+    });
+}
+
+function stopScanner() {
+    if (html5QrCode) {
+        html5QrCode.stop().then(() => {
+            html5QrCode.clear();
+            html5QrCode = null;
+            document.getElementById("startScanBtn").classList.remove("d-none");
+            document.getElementById("stopScanBtn").classList.add("d-none");
+        }).catch(err => console.log(err));
+    }
+}
+
+// 掃描報到 (徹底修正 Unexpected token '<' 錯誤)
+async function processScan(bookingId) {
+    showLoading("正在更新試算表報到紀錄...");
+
+    try {
+        await fetch(GAS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify({ action: "scan", id: bookingId }),
+            mode: "no-cors"
+        });
+        
+        alert("報到指令已發送！資料同步中...");
+        setTimeout(() => {
+            loadAdminData();
+        }, 1200); // 延遲 1.2 秒讓 GAS 寫入完成後刷新
+    } catch (err) {
+        alert("發送失敗，請檢查網路連線或 GAS 權限設定！");
+        hideLoading();
+    }
+}
+
+// 載入後台清單
+async function loadAdminData() {
+    showLoading("更新雲端名冊中...");
+    const bookings = await fetchSheetData();
+    hideLoading();
+
+    const tbody = document.getElementById("recordsTableBody");
+    tbody.innerHTML = "";
+
+    if (!bookings || bookings.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">目前尚無預約紀錄</td></tr>`;
+        return;
+    }
+
+    bookings.forEach(b => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+            <td class="fw-bold">${b.name}</td>
+            <td>${b.idCard}</td>
+            <td>${b.phone}</td>
+            <td><span class="badge bg-danger">${b.volume}</span></td>
+            <td>${b.date}<br><small class="text-muted">${b.slot}</small></td>
+            <td>${b.checkInTime || '<span class="text-muted">-</span>'}</td>
+            <td>${b.endTime || '<span class="text-muted">-</span>'}</td>
+            <td><span class="badge ${getStatusBadge(b.status)}">${b.status}</span></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function getStatusBadge(status) {
+    switch (status) {
+        case '已預約': return 'bg-secondary';
+        case '已報到': return 'bg-warning text-dark';
+        case '已完成': return 'bg-success';
+        default: return 'bg-secondary';
+    }
+}
+
+function exportToExcel() {
+    if (cachedBookings.length === 0) {
+        alert("無可匯出的資料！");
+        return;
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(cachedBookings);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "捐血名冊");
+    XLSX.writeFile(workbook, `捐血名冊紀錄_${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+</script>
+
+</body>
+</html>
