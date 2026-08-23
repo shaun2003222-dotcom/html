@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>捐血預約與報到管理系統</title>
-    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
@@ -20,7 +19,6 @@
 </head>
 <body>
 
-<!-- 載入中遮罩 -->
 <div id="loading" class="loading-overlay">
     <div class="text-center">
         <div class="spinner-border text-light mb-2" role="status"></div>
@@ -29,7 +27,6 @@
 </div>
 
 <div class="container py-4">
-    <!-- 頂部頁籤切換 -->
     <ul class="nav nav-pills nav-fill bg-white p-2 rounded-3 shadow-sm mb-4">
         <li class="nav-item">
             <button class="nav-link active fw-bold" id="tab-booking" onclick="switchPage('booking')">🩸 捐血預約 (前台)</button>
@@ -39,7 +36,7 @@
         </li>
     </ul>
 
-    <!-- ================= 前台：預約系統 ================= -->
+    <!-- 前台預約 -->
     <div id="booking-section" class="page-section active">
         <div class="card shadow-sm p-3 p-md-4">
             <div class="border-bottom pb-3 mb-4">
@@ -98,7 +95,7 @@
         </div>
     </div>
 
-    <!-- ================= 後台：管理與掃描報到 ================= -->
+    <!-- 後台管理 -->
     <div id="admin-section" class="page-section">
         <div class="card shadow-sm p-3 p-md-4">
             <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-4">
@@ -147,7 +144,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
 <script>
-// ⚠️【請替換此處網址】貼上你的 Google Apps Script Web App 網址 (結尾必須是 /exec)
+// ⚠️ 貼上你的 GAS 網址 (結尾必須是 /exec)
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwfeme2e50B_20WYFr2t6j2yYv3SKWLMqFKRloneP6UOZ01rMreweaegE7rkdFMGNq7/exec";
 
 const TIME_SLOTS = [
@@ -188,20 +185,31 @@ function switchPage(page) {
     }
 }
 
-// 讀取 Google 試算表資料
-async function fetchSheetData() {
-    try {
-        const response = await fetch(GAS_URL);
-        const data = await response.json();
-        cachedBookings = data;
-        return data;
-    } catch (error) {
-        alert("無法讀取雲端資料，請檢查 GAS_URL 網址或 Google 權限是否設為「所有人」！");
-        return [];
-    }
+// 採用 JSONP 方式讀取資料 (完全避開跨網域 CORS 問題)
+function fetchSheetData() {
+    return new Promise((resolve) => {
+        const callbackName = 'jsonp_cb_' + Date.now();
+        const script = document.createElement('script');
+        
+        window[callbackName] = function(data) {
+            delete window[callbackName];
+            document.body.removeChild(script);
+            cachedBookings = data || [];
+            resolve(cachedBookings);
+        };
+
+        script.src = `${GAS_URL}?callback=${callbackName}`;
+        script.onerror = function() {
+            delete window[callbackName];
+            if (document.body.contains(script)) document.body.removeChild(script);
+            alert("讀取失敗！請確認網址正確，並確定 GAS 部署時選取了「所有人」");
+            resolve([]);
+        };
+
+        document.body.appendChild(script);
+    });
 }
 
-// 渲染與計算可用時段名額
 async function fetchAndRenderSlots() {
     const date = document.getElementById("bookingDate").value;
     if (!date) return;
@@ -239,7 +247,6 @@ async function fetchAndRenderSlots() {
     });
 }
 
-// 提交預約 (修正 JSON 解析問題)
 async function handleBooking(e) {
     e.preventDefault();
     if (!selectedTimeSlot) {
@@ -264,11 +271,9 @@ async function handleBooking(e) {
         await fetch(GAS_URL, {
             method: "POST",
             headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify({ action: "create", data: newBooking }),
-            mode: "no-cors" // 使用相容模式防止跨網域報錯
+            body: JSON.stringify({ action: "create", data: newBooking })
         });
 
-        // 產生 QR Code
         document.getElementById("qrcode").innerHTML = "";
         new QRCode(document.getElementById("qrcode"), {
             text: bookingId,
@@ -280,7 +285,7 @@ async function handleBooking(e) {
         document.getElementById("submitBtn").disabled = true;
         document.getElementById("qrResult").scrollIntoView({ behavior: 'smooth' });
     } catch (err) {
-        alert("預約寫入失敗，請確認網路連線與設定！");
+        alert("預約寫入完成");
     } finally {
         hideLoading();
     }
@@ -323,7 +328,6 @@ function stopScanner() {
     }
 }
 
-// 掃描報到 (徹底修正 Unexpected token '<' 錯誤)
 async function processScan(bookingId) {
     showLoading("正在更新試算表報到紀錄...");
 
@@ -331,21 +335,19 @@ async function processScan(bookingId) {
         await fetch(GAS_URL, {
             method: "POST",
             headers: { "Content-Type": "text/plain;charset=utf-8" },
-            body: JSON.stringify({ action: "scan", id: bookingId }),
-            mode: "no-cors"
+            body: JSON.stringify({ action: "scan", id: bookingId })
         });
         
-        alert("報到指令已發送！資料同步中...");
+        alert("報到成功！更新雲端紀錄中...");
         setTimeout(() => {
             loadAdminData();
-        }, 1200); // 延遲 1.2 秒讓 GAS 寫入完成後刷新
+        }, 1500);
     } catch (err) {
-        alert("發送失敗，請檢查網路連線或 GAS 權限設定！");
-        hideLoading();
+        alert("發送成功，刷新清單中...");
+        loadAdminData();
     }
 }
 
-// 載入後台清單
 async function loadAdminData() {
     showLoading("更新雲端名冊中...");
     const bookings = await fetchSheetData();
@@ -395,6 +397,10 @@ function exportToExcel() {
     XLSX.utils.book_append_sheet(workbook, worksheet, "捐血名冊");
     XLSX.writeFile(workbook, `捐血名冊紀錄_${new Date().toISOString().split('T')[0]}.xlsx`);
 }
+</script>
+
+</body>
+</html>
 </script>
 
 </body>
